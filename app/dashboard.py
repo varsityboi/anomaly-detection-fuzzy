@@ -6,6 +6,20 @@ import streamlit as st
 st.set_page_config(page_title="GrayZone", layout="wide")
 LEVELS = {0: "Monitor", 1: "Investigate", 2: "High"}
 
+# same severity table as in 05_fuzzy (0 = harmless, 1 = worst)
+SEVERITY = {
+    "BENIGN": 0.0, "PortScan": 0.3,
+    "FTP-Patator": 0.5, "SSH-Patator": 0.5, "Web Attack - Brute Force": 0.5, "Web Attack - XSS": 0.6,
+    "DoS Hulk": 0.8, "DoS GoldenEye": 0.8, "DoS slowloris": 0.8, "DoS Slowhttptest": 0.8, "DDoS": 0.9,
+    "Web Attack - Sql Injection": 0.9, "Bot": 0.9, "Infiltration": 1.0, "Heartbleed": 1.0,
+}
+
+def severity_word(s):
+    return "None" if s == 0 else ("Low" if s < 0.4 else ("Medium" if s < 0.7 else "High"))
+
+def expected_action(s):
+    return "Monitor" if s == 0 else ("Investigate" if s < 0.7 else "High")
+
 @st.cache_data
 def load():
     df = pd.read_parquet("data/fuzzy/dashboard.parquet")
@@ -74,3 +88,46 @@ if len(alerts):
     st.bar_chart(inputs)
     st.write(f"Classifier's best guess: **{row['pred']}**"
              + (f" · true label: **{row['label']}**" if show_truth else ""))
+
+# ---------------- attack lookup ----------------
+st.divider()
+st.subheader("Attack lookup")
+query = st.text_input("Type an attack name (e.g. DoS, Web, Bot, Scan)", "")
+scope_all_days = st.checkbox("Search all days (not just the selected one)", value=True)
+
+if query:
+    base = df if scope_all_days else d
+    q = query.lower()
+    matched = sorted(l for l in base["label"].unique() if q in l.lower() and l != "BENIGN")
+    if not matched:
+        st.warning(f"No attack label contains '{query}'. Known attacks: "
+                   + ", ".join(sorted(l for l in SEVERITY if l != "BENIGN")))
+    else:
+        hits = base[base["label"].isin(matched)]
+        summary = []
+        for lab in matched:
+            g = hits[hits["label"] == lab]
+            sev = SEVERITY.get(lab, float("nan"))
+            summary.append({
+                "attack": lab,
+                "severity": sev,
+                "severity level": severity_word(sev),
+                "should be": expected_action(sev),
+                "flows": len(g),
+                "High %": round((g["fuzzy_tuned"] == 2).mean() * 100, 1),
+                "Investigate %": round((g["fuzzy_tuned"] == 1).mean() * 100, 1),
+                "Monitor (missed) %": round((g["fuzzy_tuned"] == 0).mean() * 100, 1),
+                "avg risk": round(g["risk"].mean(), 1),
+            })
+        st.dataframe(pd.DataFrame(summary), width="stretch", hide_index=True)
+        st.caption("severity: our danger table (0 = harmless, 1 = worst). "
+                   "'should be' = the level this attack type deserves; the % columns show what the fuzzy layer actually gave.")
+
+        st.markdown(f"**{len(hits):,} flows** of: {', '.join(matched)} (highest risk first)")
+        show = ["ts", "label", "Source IP", "Destination IP", "Destination Port", "risk",
+                "fuzzy_tuned", "pred", "p_attack", "anomaly_pct", "scan_evidence", "top_rule"]
+        table = hits.sort_values("risk", ascending=False)[show].head(500)
+        table["fuzzy_tuned"] = table["fuzzy_tuned"].map(LEVELS)
+        st.dataframe(table.rename(columns={"fuzzy_tuned": "level"})
+                          .round({"risk": 1, "p_attack": 3, "anomaly_pct": 3, "scan_evidence": 3}),
+                     width="stretch", hide_index=True)
