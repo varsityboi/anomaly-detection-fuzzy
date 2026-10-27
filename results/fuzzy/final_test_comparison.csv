@@ -1,0 +1,5 @@
+method,match,kappa,benign->High,benign->Investigate,attacks missed (Monitor),severe not High
+crisp A: classifier only,0.9944,0.9779,976,72,2048,2097
+crisp B: classifier + anomaly,0.985,0.9685,976,5359,2045,2097
+fuzzy: hand-made rules,0.9247,0.905,126,14487,1392,27940
+fuzzy: tuned (neuro-fuzzy),0.9852,0.97,379,4806,2342,3156
